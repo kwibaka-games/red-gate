@@ -756,6 +756,12 @@ export class RedGateMatch {
           const doors = this.mansion(match)
             .filter((candidate) => candidate.id !== card.id)
             .map((candidate) => candidate.door ?? 0);
+          if (doors.length === 0) {
+            this.removeCard(match, card);
+            this.clearPending(match);
+            this.completeCard(match, ctx);
+            return;
+          }
           this.setPending(match, {
             kind: 'danger-card',
             actorId: actor.userId,
@@ -1049,6 +1055,11 @@ export class RedGateMatch {
         const doors = this.mansion(match)
           .filter((candidate) => candidate.id !== card.id)
           .map((candidate) => candidate.door ?? 0);
+        if (doors.length === 0) {
+          this.removeCard(match, card);
+          this.completeCard(match, ctx);
+          return;
+        }
         this.setPending(match, {
           kind: 'clue-card',
           actorId: actor.userId,
@@ -1161,6 +1172,12 @@ export class RedGateMatch {
         const doors = this.mansion(match)
           .filter((candidate) => candidate.id !== card.id)
           .map((candidate) => candidate.door ?? 0);
+        if (doors.length === 0) {
+          this.removeCard(match, card);
+          this.shuffleMansion(match);
+          this.completeCard(match, ctx);
+          return;
+        }
         match.peekMansionFor = actor.userId;
         for (const monitor of match.players) {
           if (
@@ -1242,6 +1259,11 @@ export class RedGateMatch {
         const doors = this.mansion(match)
           .filter((candidate) => candidate.id !== card.id)
           .map((candidate) => candidate.door ?? 0);
+        if (doors.length === 0) {
+          this.removeCard(match, card);
+          this.completeCard(match, ctx);
+          return;
+        }
         this.setPending(match, {
           kind: 'whisper-target',
           actorId: actor.userId,
