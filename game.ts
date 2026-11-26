@@ -797,6 +797,13 @@ export class RedGateMatch {
         return;
       }
       case 'lucky-target': {
+        if (choice === 'skip') {
+          const source = this.cardById(match, ctx.cardId);
+          if (source) this.claimEmpty(match, source, bearer);
+          this.clearPending(match);
+          this.completeCard(match, ctx);
+          return;
+        }
         const card = this.cardById(match, choice);
         if (!card || !KEY_TYPES.has(card.type)) return;
         card.revealed = true;
@@ -815,6 +822,13 @@ export class RedGateMatch {
         return;
       }
       case 'bullet-target': {
+        if (choice === 'skip') {
+          const source = this.cardById(match, ctx.cardId);
+          if (source) this.claimEmpty(match, source, bearer);
+          this.clearPending(match);
+          this.completeCard(match, ctx);
+          return;
+        }
         const target = this.player(match, choice);
         if (!target || !target.alive) return;
         const source = this.cardById(match, ctx.cardId);
@@ -1100,14 +1114,17 @@ export class RedGateMatch {
         this.setPending(match, {
           kind: 'lucky-target',
           actorId: actor.userId,
-          prompt: '选择一张被声称为银钥匙的牌公开。',
-          options: candidates.map((candidate) => {
-            const owner = candidate.ownerId ? this.player(match, candidate.ownerId) : null;
-            return {
-              id: candidate.id,
-              label: `${owner?.name ?? '玩家'} 的一张「银钥匙」`,
-            };
-          }),
+          prompt: '选择一张被声称为银钥匙的牌公开，或声称这张牌是空房间。',
+          options: [
+            ...candidates.map((candidate) => {
+              const owner = candidate.ownerId ? this.player(match, candidate.ownerId) : null;
+              return {
+                id: candidate.id,
+                label: `${owner?.name ?? '玩家'} 的一张「银钥匙」`,
+              };
+            }),
+            { id: 'skip', label: '不使用，声称空房间' },
+          ],
           ctx,
         });
         return;
@@ -1118,9 +1135,12 @@ export class RedGateMatch {
             kind: 'bullet-target',
             actorId: actor.userId,
             prompt: '你持有手枪。要开枪杀死一名玩家吗？',
-            options: match.players
-              .filter((candidate) => candidate.alive)
-              .map((candidate) => ({ id: candidate.userId, label: candidate.name })),
+            options: [
+              ...match.players
+                .filter((candidate) => candidate.alive)
+                .map((candidate) => ({ id: candidate.userId, label: candidate.name })),
+              { id: 'skip', label: '不开枪，声称空房间' },
+            ],
             ctx,
           });
         } else {
