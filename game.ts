@@ -78,7 +78,7 @@ interface Pending {
   kind: PendingKind;
   actorId: string;
   prompt: string;
-  options: RedGateOption[];
+  options?: RedGateOption[];
   doors?: number[];
   ctx?: EffectContext;
   submitted?: Map<string, number>;
@@ -283,6 +283,8 @@ export class RedGateMatch {
   }
 
   private openDoor(match: Match, actor: Player, card: Card): void {
+    match.peeks.clear();
+    match.peekMansionFor = null;
     match.stage = 'resolving';
     const ctx: EffectContext = {
       actorId: actor.userId,
@@ -313,6 +315,15 @@ export class RedGateMatch {
     if (!card) return;
     const bearer = this.player(match, ctx.bearerId);
     if (!bearer) return;
+    if (match.grimoire && DANGEROUS.has(card.type)) {
+      this.addLog(match, `魔导书生效：【${cardDef(card.type).name}】导致强制死亡。`, 'death');
+      if (card.type === 'hypno-gas' || card.type === 'neuro-gas' || card.type === 'danger-crack') {
+        this.removeCard(match, card);
+      }
+      this.kill(match, bearer, true, '魔导书');
+      if (match.phase === 'playing') this.completeCard(match, ctx);
+      return;
+    }
     if (DANGEROUS.has(card.type) && this.player(match, ctx.actorId)?.role === 'murderer') {
       this.setPending(match, {
         kind: 'lie',
@@ -502,6 +513,7 @@ export class RedGateMatch {
       view: this.viewFor(match, playerId),
       actions: [],
     });
+    this.sendChatPolicy(match);
   }
 
   private cardView(match: Match, card: Card, actual: boolean): RedGateCardView {
@@ -532,7 +544,7 @@ export class RedGateMatch {
       actorId: pending.actorId,
       actorName: actor?.name ?? '',
       prompt: pending.prompt,
-      ...(pending.options.length ? { options: pending.options } : {}),
+      ...(pending.options?.length ? { options: pending.options } : {}),
       ...(pending.doors ? { doors: pending.doors } : {}),
       ...(pending.deadline ? { deadline: pending.deadline } : {}),
       ...(isTattoo ? { submitted: !!userId && !!pending.submitted?.has(userId) } : {}),
@@ -549,7 +561,7 @@ export class RedGateMatch {
 
   private viewFor(match: Match, userId: string | null): RedGateView {
     const spectator = userId === null;
-    const viewer = userId ? this.player(match, userId) : null;
+    const viewer = userId ? this.player(match, userId) ?? null : null;
     const revealRoles = spectator || match.phase === 'finished';
     const mansion = this.mansion(match);
     const youHasGift = viewer ? this.playerHasItem(match, viewer, 'gift') : false;
@@ -608,7 +620,7 @@ export class RedGateMatch {
               .map((card) => this.cardView(match, card, true)),
           }
         : {}),
-      ...(match.peekMansionFor === userId
+      ...(userId !== null && match.peekMansionFor === userId
         ? {
             peekMansion: mansion.map((card) => this.cardView(match, card, true)),
           }
@@ -652,7 +664,7 @@ export class RedGateMatch {
   private rescueTargets(match: Match, viewer: Player | null): { userId: string; name: string }[] {
     if (!viewer || !viewer.alive || match.stage !== 'open' || match.pending) return [];
     if (viewer.seat !== match.turnSeat) return [];
-    if (this.heldKeys(match, viewer.userId).length === 0) return [];
+    if (!this.heldKeys(match, viewer.userId).some((card) => card.type === 'silver-key')) return [];
     return match.players
       .filter(
         (candidate) =>
@@ -943,10 +955,7 @@ export class RedGateMatch {
     card.claim = 'silver';
     card.revealed = false;
     this.addLog(match, `${actor.name} 将一张牌扣在面前，声称是银钥匙。`, 'claim');
-    if (card.type === 'killer-key' && receiver.role === 'good') {
-      receiver.role = 'murderer';
-      this.addLog(match, `${receiver.name} 的脸色变了。`, 'death');
-    }
+    if (card.type === 'killer-key') receiver.role = 'murderer';
     this.checkAllFour(match);
     if (match.phase === 'playing') this.completeCard(match, match.ctx!);
   }
@@ -1135,7 +1144,7 @@ export class RedGateMatch {
         for (const player of match.players) {
           itemsByPlayer.set(player.userId, this.heldItems(match, player.userId));
         }
-        const order = [...match.players].sort((a, b) => a.seat - b.seat);
+        const order = [...match.players].filter((player) => player.alive).sort((a, b) => a.seat - b.seat);
         for (let index = 0; index < order.length; index += 1) {
           const recipient = order[(index - 1 + order.length) % order.length]!;
           for (const item of itemsByPlayer.get(order[index]!.userId) ?? []) {
@@ -1153,6 +1162,18 @@ export class RedGateMatch {
           .filter((candidate) => candidate.id !== card.id)
           .map((candidate) => candidate.door ?? 0);
         match.peekMansionFor = actor.userId;
+        for (const monitor of match.players) {
+          if (
+            monitor.alive &&
+            monitor.userId !== actor.userId &&
+            this.playerHasItem(match, monitor, 'monitor')
+          ) {
+            match.peeks.set(
+              monitor.userId,
+              this.mansion(match).map((candidate) => candidate.id),
+            );
+          }
+        }
         this.setPending(match, {
           kind: 'fbi-card',
           actorId: actor.userId,
@@ -1268,8 +1289,6 @@ export class RedGateMatch {
       ctx.fbi = false;
       this.shuffleMansion(match);
     }
-    match.peeks.clear();
-    match.peekMansionFor = null;
     match.ctx = null;
     const actor = this.player(match, ctx.actorId);
     if (!actor || !actor.alive) {
@@ -1306,8 +1325,6 @@ export class RedGateMatch {
     match.ctx = null;
     match.stage = 'open';
     match.extraUsed = false;
-    match.peeks.clear();
-    match.peekMansionFor = null;
     const count = match.players.length;
     let seat = match.turnSeat;
     for (let step = 0; step < count * 2 + 1; step += 1) {
@@ -1317,6 +1334,7 @@ export class RedGateMatch {
       if (!candidate || !candidate.alive) continue;
       if (
         this.playerHasItem(match, candidate, 'neuro-gas') &&
+        !this.playerHasItem(match, candidate, 'gas-mask') &&
         candidate.neuroTurn !== null &&
         match.turnNumber - candidate.neuroTurn >= 4
       ) {
@@ -1497,7 +1515,12 @@ export class RedGateMatch {
         .filter(([, number]) => number === max)
         .map(([id]) => this.player(match, id))
         .filter((player): player is Player => !!player && player.alive);
-      for (const victim of victims) this.kill(match, victim, false, '数字刺青');
+      for (const victim of victims) this.kill(match, victim, false, '数字刺青', true);
+      const alive = this.alivePlayers(match);
+      if (alive.length === 0) this.finish(match, [], 'all_dead');
+      else if (alive.length === 1 && alive[0]!.role === 'murderer') {
+        this.finish(match, [alive[0]!.userId], 'murderer');
+      }
     }
     if (match.phase === 'playing') this.completeCard(match, ctx);
   }
